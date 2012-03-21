@@ -10,10 +10,6 @@
 #include <stdarg.h>
 
 #define BUFLEN 512
-#define NPACK 10
-#define PORT 9930
-#define LOCALHOST 0x7f000001
-
 
 void diep(char *s)
 {
