@@ -1,0 +1,122 @@
+#!/usr/bin/ruby
+
+require 'thread'
+
+$input_buffer = "";  
+$ready = false;
+incoming_message = false
+
+$peers = {}
+$hiddenpings = 0
+
+
+def syncprint(msg) 
+  print "\033[2K\r#{msg}\n#{input_buffer}"
+end
+
+def updatedisplay
+  print "\033[2K\r#{input_buffer}"
+end
+
+def input_buffer
+  if !$ready
+    "-- please wait --"
+  elsif $input_buffer =~ / /
+    peer, message = $input_buffer.split " ", 2
+    if $peers[peer.to_i]
+      "Peer #{peer.ljust(6)} < #{message}"
+    else
+      "> " + $input_buffer
+    end
+  elsif $input_buffer == "" && $hiddenpings != 0
+    "-- #{$hiddenpings} hidden pings --"
+  else  
+    "> " + $input_buffer
+  end
+    
+end
+
+begin  
+  system("stty -echo -icanon min 1 time 0")
+
+  program = ARGV[0]
+  if program.nil?
+    program = "./cdht"
+  end
+
+  clients = [10, 15, 40, 60, 65, 99, 124, 131];
+  if ARGV[1]
+    clients = ARGV[1].split(',').collect{|x| x.to_i}
+  end
+  clients = clients.sort.uniq
+
+  threads = [] 
+
+  syncprint "Running #{program} with clients #{clients.join(", ")}"  
+
+  clients.each_with_index do |client, i|
+    successors = [clients[(i + 1) % clients.length], clients[(i + 2) % clients.length]]
+    threads << Thread.new do
+      command = [program, client, *successors].join " "
+      syncprint "Peer #{client.to_s.ljust(6)} $ #{command}" 
+      IO.popen(command + " 2>&1", :mode => "r+") do |f|
+        $peers[client] = f
+        while str = f.gets
+          if !($hideping && str =~ /A ping/)
+            syncprint "Peer #{client.to_s.ljust(6)} > #{str.strip}"
+	    else
+	      $hiddenpings += 1
+	      updatedisplay
+	    end 
+        end
+      end
+      syncprintf "Peer #{client.to_s.ljust(6)} - exit(#{$?})"
+    end
+    sleep 0.1
+  end
+  $ready = true
+  syncprint("Ready")
+  begin
+    str = STDIN.getc
+    if str.chr == "\n"
+      peer, message = $input_buffer.split ' ', 2
+      $input_buffer = ""
+      if $peers[peer.to_i]
+        $peers[peer.to_i].puts message
+        syncprint "Peer #{peer.ljust 6} < #{message}"
+	$input_buffer = peer + " "
+      else
+	if peer == "hideping"
+	  $hideping = true
+	  syncprint "Hiding pings"
+	elsif peer == "showping"
+	  $hideping = false
+          $hiddenpings = 0
+	  syncprint "Showing pings"
+	elsif peer == "quit" || peer == "exit"
+          threads.each {|x| x.kill}
+	  exit
+	else
+          syncprint "Invalid peer #{peer}"
+	end
+      end
+    elsif str.chr == "\u007F"
+      $input_buffer = $input_buffer[0..-2]
+    else
+      $input_buffer = $input_buffer + str.chr  
+    end
+    $input_buffer = $input_buffer.downcase.gsub(/ +/, ' ')
+    if !($input_buffer =~ / / && $peers[$input_buffer.split(" ")[0].to_i])
+      $input_buffer = $input_buffer[0..49]
+    else 
+      peer, message = $input_buffer.split ' ', 2
+      message = message[0..39]
+      $input_buffer = peer + " " + message
+    end
+    print "\033[2K\r#{input_buffer}"
+  end while (true) 
+rescue Exception => e
+  syncprint e 
+ensure  
+  system("stty -raw echo")  
+end
